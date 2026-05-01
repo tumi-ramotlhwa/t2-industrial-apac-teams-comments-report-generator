@@ -111,7 +111,6 @@ def select_date_range():
     print("Select a performance period to retrive teams messages:")
     for idx, (start, end) in enumerate(ranges, 1):
         print(f"{idx}) {format_range(start, end)}")
-        print('')
 
     # User selection
     choice = int(input("Enter choice number: "))
@@ -409,6 +408,11 @@ def main():
             "total_messages": 0,
         },
         "Wilson Nien (粘 朝崴)": {
+            "thread_messages": 0,
+            "channel_messages": 0,
+            "total_messages": 0,
+        },
+        "Tumi Ramotlhwa": {
             "thread_messages": 0,
             "channel_messages": 0,
             "total_messages": 0,
