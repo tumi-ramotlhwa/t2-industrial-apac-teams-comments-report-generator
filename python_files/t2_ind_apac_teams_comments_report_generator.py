@@ -22,7 +22,7 @@ class IgnoreHTTP200Filter(logging.Filter):
         if "Reply fetch HTTP 200 for message" in msg:
             return False
         return True
-
+0
 logger = logging.getLogger()
 for handler in logger.handlers:
     handler.addFilter(IgnoreHTTP200Filter())
@@ -76,52 +76,61 @@ def clean_content(content):
     return content
 
 def ordinal(n):
-    # Return ordinal suffix for day numbers
+    """Return ordinal suffix for day numbers (e.g., 1st, 2nd, 3rd, 4th)"""
     return f"{n}{'tsnrhtdd'[(n//10%10!=1)*(n%10<4)*n%10::4]}"
 
-def format_range(start, end):
-    # Format date range like '1st July 2025 - Today'
-    start_text = f"{ordinal(start.day)} {start.strftime('%B')} {start.year}"
-    end_text = "Today" if end == date.today() else f"{ordinal(end.day)} {end.strftime('%B')} {end.year}"
-    global PERFORMANCE_PERIOD 
-    PERFORMANCE_PERIOD = f"{start_text} - {end_text}"
-    return PERFORMANCE_PERIOD
+def format_date(d):
+    """Format date as '1st July 2025'"""
+    return f"{ordinal(d.day)} {d.strftime('%B')} {d.year}"
 
-# This is returning the 3 neccessary dates for the date range chosen by the user 
-# E.g: If user requests to grab messages sent between 1st Jan 2025 - 30th June 2025, the function will return the following:
-# Start search date for all threads (1 year lookback): 1st Jan 2024
-# Only store messages sent from (start): 1st Jan 2025
-# Only store messeges sent by (end): 30th Jun 2025
+def get_date_input(prompt):
+    """Safely get a date from user input with validation"""
+    while True:
+        try:
+            user_input = input(prompt).strip()
+            # Parse using dateutil.parser (supports many formats)
+            parsed_date = parser.isoparse(user_input).date()
+            return parsed_date
+        except Exception as e:
+            print(f"Invalid date format. Please enter a valid date (e.g., '2025-01-15', '15 Jan 2025', 'January 15, 2025').")
+            continue
+
 def select_date_range():
-    today = date.today()
-    year = today.year
-    ranges = []
+    """
+    Prompt user for custom start and end dates.
+    Returns:
+        [one_year_before, start, end] as timezone-aware datetime objects (UTC)
+    """
+    print("Enter a custom date range to retrieve Teams messages:")
 
-    # If today's date is in second half of the year (Jul 1 – Dec 31)
-    if today >= date(year, 7, 1):
-        ranges.append((date(year, 7, 1), today))                  # 1 Jul (Current year) – Today's date
-        ranges.append((date(year, 1, 1), date(year, 6, 30)))      # 1 Jan (Current year) – 30 Jun (Current year)
-        ranges.append((date(year-1, 7, 1), date(year-1, 12, 31))) # 1 Jul (Current year) – 31 Dec (Previous year)
-    # If today's date is in first half of the year (Jan 1 – Jun 30)
-    else:
-        ranges.append((date(year, 1, 1), today))                  # 1 Jan (Current year) – Today's date
-        ranges.append((date(year-1, 7, 1), date(year-1, 12, 31))) # 1 Jul (Previous year) – 31 Dec (Previous year)
-        ranges.append((date(year-1, 1, 1), date(year-1, 6, 30)))  # 1 Jan (Previous year) – 30 Jun (Previous year)
-    
-    print("Select a performance period to retrive teams messages:")
-    for idx, (start, end) in enumerate(ranges, 1):
-        print(f"{idx}) {format_range(start, end)}")
+    # Get start date
+    start_date = get_date_input("Enter start date (e.g., 2025-01-15, 15 Jan 2025): ")
 
-    # User selection
-    choice = int(input("Enter choice number: "))
-    start, end = ranges[choice - 1]
-    one_year_before = start.replace(year=start.year - 1)
+    # Get end date
+    end_date = get_date_input("Enter end date (e.g., 2025-06-30, 30 Jun 2025): ")
 
-    start = datetime(start.year, start.month, start.day, tzinfo=timezone.utc).isoformat()
-    end = datetime(end.year, end.month, end.day, tzinfo=timezone.utc).isoformat()
-    one_year_before = datetime(one_year_before.year, one_year_before.month, one_year_before.day, tzinfo=timezone.utc).isoformat()
+    # Validate: end date must be >= start date
+    if end_date < start_date:
+        print("Error: End date cannot be before start date.")
+        return None
 
-    return [parser.isoparse(start), parser.isoparse(end), parser.isoparse(one_year_before)]
+    # Calculate one year before start date
+    try:
+        one_year_before = start_date.replace(year=start_date.year - 1)
+    except ValueError:
+        # Handle leap year edge case: Feb 29 → Feb 28 in non-leap year
+        one_year_before = start_date.replace(year=start_date.year - 1, day=28)
+
+    # Convert to UTC-aware ISO format
+    def to_utc_iso(dt):
+        return datetime(dt.year, dt.month, dt.day, tzinfo=timezone.utc).isoformat()
+
+    # Return parsed datetime objects (UTC)
+    return [
+        parser.isoparse(to_utc_iso(one_year_before)),
+        parser.isoparse(to_utc_iso(start_date)),
+        parser.isoparse(to_utc_iso(end_date))
+    ]
  
 # Retry the function with exponential backoff
 @retry(wait=wait_exponential(multiplier=3, min=30, max=600), stop=stop_after_attempt(5))
@@ -223,9 +232,10 @@ def get_team_messages(access_token, refresh_token, team_id, channel_id, channel_
     url = f"https://graph.microsoft.com/v1.0/teams/{team_id}/channels/{channel_id}/messages"
     headers = {'Authorization': f'Bearer {access_token}'}
 
-    start_date = dates[0]
-    end_date = dates[1]
-    lookback_date = dates[2]
+
+    lookback_date = dates[0]
+    start_date = dates[1]
+    end_date = dates[2]
 
     old_msg = 0
     t2_messages_tracker = []
@@ -234,7 +244,6 @@ def get_team_messages(access_token, refresh_token, team_id, channel_id, channel_
         try:
             response = make_request_with_retry(url, headers, session, refresh_token)
             messages = response.json()
-
             messages_data = messages["value"]
 
             # Only keep messages before the end date
@@ -372,17 +381,17 @@ def main():
         "https://teams.microsoft.com/l/channel/19%3A32ffd48efda44e0fb13f0a6f9f711712%40thread.skype/Western%20Downs%20SM-11027?groupId=1c77ec90-9f5a-4cf6-8337-e75399c26770&tenantId=9026c5f4-86d0-4b9f-bd39-b7d4d0fb4674"
     ]
     t2_members = {
-        "David Lam": {
-            "thread_messages": 0,
-            "channel_messages": 0,
-            "total_messages": 0,
-            },
         "Jarrod Barnes": {
             "thread_messages": 0,
             "channel_messages": 0,
             "total_messages": 0,
         },
         "Ricky Chan": {
+            "thread_messages": 0,
+            "channel_messages": 0,
+            "total_messages": 0,
+        },
+        "Bowen Huo": {
             "thread_messages": 0,
             "channel_messages": 0,
             "total_messages": 0,
@@ -413,6 +422,21 @@ def main():
             "total_messages": 0,
         },
         "Tumi Ramotlhwa": {
+            "thread_messages": 0,
+            "channel_messages": 0,
+            "total_messages": 0,
+        },
+        "Jankin Wang": {
+            "thread_messages": 0,
+            "channel_messages": 0,
+            "total_messages": 0,
+        },
+        "Sheng Wen Qiu": {
+            "thread_messages": 0,
+            "channel_messages": 0,
+            "total_messages": 0,
+        },
+        "Keyur Shah": {
             "thread_messages": 0,
             "channel_messages": 0,
             "total_messages": 0,
