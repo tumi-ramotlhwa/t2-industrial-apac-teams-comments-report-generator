@@ -1,6 +1,4 @@
-# t2-industrial-apac-teams-comments-report-generator
-
-# BESS Teams Message Tracker
+# T2 industrial apac teams comments report generator
 
 Track T2 member Teams messages across channels/threads for BESS project sites. Uses Microsoft Graph API to pull data with custom date ranges and exports to CSV for performance analysis.
 
