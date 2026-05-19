@@ -111,8 +111,15 @@ def select_date_range():
     if end_date < start_date:
         print("Error: End date cannot be before start date.")
         return None
+    
+    # # Calculate one year before start date
+    # try:
+    #     one_year_before = start_date.replace(year=start_date.year - 1)
+    # except ValueError:
+    #     # Handle leap year edge case: Feb 29 → Feb 28 in non-leap year
+    #     one_year_before = start_date.replace(year=start_date.year - 1, day=28)
 
-    # Calculate 6 months before start date
+    # Calculate 6 months before start date (6 months for speed and efficiency)
     try:
         six_months_before = start_date.replace(month=start_date.month - 6)
     except ValueError:
