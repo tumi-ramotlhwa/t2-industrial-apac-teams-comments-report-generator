@@ -99,14 +99,12 @@ def select_date_range():
     """
     Prompt user for custom start and end dates.
     Returns:
-        [one_year_before, start, end] as timezone-aware datetime objects (UTC)
+        [six_months_before, start, end] as timezone-aware datetime objects (UTC)
     """
     print("Enter a custom date range to retrieve Teams messages:")
 
-    # Get start date
     start_date = get_date_input("Enter start date (e.g., 2025-01-15, 15 Jan 2025): ")
 
-    # Get end date
     end_date = get_date_input("Enter end date (e.g., 2025-06-30, 30 Jun 2025): ")
 
     # Validate: end date must be >= start date
@@ -114,12 +112,12 @@ def select_date_range():
         print("Error: End date cannot be before start date.")
         return None
 
-    # Calculate one year before start date
+    # Calculate 6 months before start date
     try:
-        one_year_before = start_date.replace(year=start_date.year - 1)
+        six_months_before = start_date.replace(month=start_date.month - 6)
     except ValueError:
-        # Handle leap year edge case: Feb 29 → Feb 28 in non-leap year
-        one_year_before = start_date.replace(year=start_date.year - 1, day=28)
+        # Handle month rollover: Jan–Jun → previous year
+        six_months_before = start_date.replace(year=start_date.year - 1, month=start_date.month + 6)
 
     # Convert to UTC-aware ISO format
     def to_utc_iso(dt):
@@ -127,7 +125,7 @@ def select_date_range():
 
     # Return parsed datetime objects (UTC)
     return [
-        parser.isoparse(to_utc_iso(one_year_before)),
+        parser.isoparse(to_utc_iso(six_months_before)),
         parser.isoparse(to_utc_iso(start_date)),
         parser.isoparse(to_utc_iso(end_date))
     ]
@@ -218,7 +216,7 @@ def save_to_csv(message_tracker, channel_name, t2_members, in_progress):
                 writer.writerow([''] + list(t2_members.keys()))
                 writer.writerow([channel_name])
                 for data in message_tracker:
-                    writer.writerow([data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7], data[8]])
+                    writer.writerow([data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7], data[8], data[9], data[10], data[11], data[12]])
             else:
                 logging.info(f"Writing total messages count to CSV\n")
                 writer.writerow([f"TOTAL MESSAGES FOR {PERFORMANCE_PERIOD.upper()}"] + [member["total_messages"] for member in t2_members.values()])
@@ -396,7 +394,7 @@ def main():
             "channel_messages": 0,
             "total_messages": 0,
         },
-        "Zachariah Couch": {
+         "Keyur Shah": {
             "thread_messages": 0,
             "channel_messages": 0,
             "total_messages": 0,
@@ -426,17 +424,17 @@ def main():
             "channel_messages": 0,
             "total_messages": 0,
         },
+        "Zachariah Couch": {
+            "thread_messages": 0,
+            "channel_messages": 0,
+            "total_messages": 0,
+        },
         "Jankin Wang": {
             "thread_messages": 0,
             "channel_messages": 0,
             "total_messages": 0,
         },
         "Sheng Wen Qiu": {
-            "thread_messages": 0,
-            "channel_messages": 0,
-            "total_messages": 0,
-        },
-        "Keyur Shah": {
             "thread_messages": 0,
             "channel_messages": 0,
             "total_messages": 0,
