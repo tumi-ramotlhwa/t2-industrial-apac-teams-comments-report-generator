@@ -234,9 +234,9 @@ def save_to_csv(message_tracker, channel_name, t2_members, in_progress):
         print(e)
         
 def get_team_messages(access_token, refresh_token, team_id, channel_id, channel_name, team_name, session, dates, t2_members):
-    url = f"https://graph.microsoft.com/v1.0/teams/{team_id}/channels/{channel_id}/messages"
+    # Use expand for speed, but we'll handle deep replies manually when needed
+    url = f"https://graph.microsoft.com/v1.0/teams/{team_id}/channels/{channel_id}/messages?$expand=replies&$top=50"
     headers = {'Authorization': f'Bearer {access_token}'}
-
 
     lookback_date = dates[0]
     start_date = dates[1]
@@ -249,71 +249,86 @@ def get_team_messages(access_token, refresh_token, team_id, channel_id, channel_
         try:
             response = make_request_with_retry(url, headers, session, refresh_token)
             messages = response.json()
-            messages_data = messages["value"]
+            messages_data = messages.get("value", [])
 
-            # Only keep messages before the end date
-            messages_filtered = list(filter(lambda m: datetime.fromisoformat(m["createdDateTime"].replace("Z", "+00:00")) <= end_date, messages_data))
+            messages_filtered = [
+                m for m in messages_data 
+                if datetime.fromisoformat(m["createdDateTime"].replace("Z", "+00:00")) <= end_date
+            ]
 
-            # Sort messages in reverse chronological order (newest to oldest)
-            messages_sorted = sorted(messages_filtered, key=lambda m: datetime.fromisoformat(m["createdDateTime"].replace("Z", "+00:00")), reverse=True)
+            messages_sorted = sorted(messages_filtered, 
+                                   key=lambda m: datetime.fromisoformat(m["createdDateTime"].replace("Z", "+00:00")), 
+                                   reverse=True)
 
             for msg in messages_sorted:
-
                 msg_date = parser.isoparse(msg['createdDateTime'].replace("Z", "+00:00"))
                 logging.info(f"Checking next message at {channel_name}, date {msg_date}")
                 
-                # 3 is an arbituary value, if more than 3 threads go beyond the lookback date, it is safe to say the search has gone far enough
-                if msg_date < lookback_date: 
+                if msg_date < lookback_date:
                     old_msg += 1
                     if old_msg > 3:
                         t2_messages_tracker.append(['TOTAL:'] + [member['channel_messages'] for member in t2_members.values()])
-                        for member in t2_members: t2_members[member]["channel_messages"] = 0
+                        for member in t2_members: 
+                            t2_members[member]["channel_messages"] = 0
                         return t2_messages_tracker
 
-                # Count data if a T2 member made a teams channel thread inside the selected date range
-                if (msg['deletedDateTime'] is None) and \
-                    (msg['messageType'] == 'message') and \
-                    (msg_date >= start_date) and \
-                    (msg_date <= end_date) and \
-                    (msg["from"]["user"]["displayName"] in t2_members):
-                    t2_members[msg["from"]["user"]["displayName"]]["thread_messages"] += 1
-                    t2_members[msg["from"]["user"]["displayName"]]["channel_messages"] += 1
-                    t2_members[msg["from"]["user"]["displayName"]]["total_messages"] += 1
-                    #print(msg, "\n")
+                # Process parent message
+                if (msg.get('deletedDateTime') is None and 
+                    msg.get('messageType') == 'message' and 
+                    start_date <= msg_date <= end_date):
+                    
+                    sender = msg.get("from", {}).get("user", {}).get("displayName")
+                    if sender in t2_members:
+                        t2_members[sender]["thread_messages"] += 1
+                        t2_members[sender]["channel_messages"] += 1
+                        t2_members[sender]["total_messages"] += 1
 
-                replies = get_replies(msg['id'], access_token, team_id, channel_id, session, refresh_token)
-                for reply in replies:
-                    reply_date = parser.isoparse(reply['createdDateTime'].replace("Z", "+00:00"))
-                    #print(reply, "\n")
-
-                    # Count data if a T2 member made a teams reply to the channel thread inside the selected date range
-                    if (reply['deletedDateTime'] is None) and \
-                        (reply['messageType'] == 'message') and \
-                        (reply_date >= start_date) and \
-                        (reply_date <= end_date) and \
-                        (reply["from"]["user"]["displayName"] in t2_members):  
-                        t2_members[reply["from"]["user"]["displayName"]]["thread_messages"] += 1
-                        t2_members[reply["from"]["user"]["displayName"]]["channel_messages"] += 1
-                        t2_members[reply["from"]["user"]["displayName"]]["total_messages"] += 1
+                # === Handle Replies ===
+                expanded_replies = msg.get('replies', [])
+                reply_count = len(expanded_replies)
                 
-                # Reset all team members' thread message count to 0 when thread search is complete
-                if sum(member["thread_messages"] for member in t2_members.values()) > 0:
-                    t2_messages_tracker.append([msg['webUrl']] + [member['thread_messages'] for member in t2_members.values()])
-                    for member in t2_members: t2_members[member]["thread_messages"] = 0
+                # If we got close to the expand limit, fetch all replies the old way to be safe
+                if reply_count >= 190:   # safety buffer before 200
+                    logging.warning(f"Large reply thread detected ({reply_count}+) for msg {msg['id'][:8]}... Fetching all replies")
+                    all_replies = get_replies(msg['id'], access_token, team_id, channel_id, session, refresh_token)
+                else:
+                    all_replies = expanded_replies
 
-            # Continue to the next page of messages if available
+                for reply in all_replies:
+                    if not isinstance(reply, dict):
+                        continue
+                    try:
+                        reply_date = parser.isoparse(reply['createdDateTime'].replace("Z", "+00:00"))
+                    except:
+                        continue
+
+                    if (reply.get('deletedDateTime') is None and 
+                        reply.get('messageType') == 'message' and 
+                        start_date <= reply_date <= end_date):
+                        
+                        sender = reply.get("from", {}).get("user", {}).get("displayName")
+                        if sender in t2_members:
+                            t2_members[sender]["thread_messages"] += 1
+                            t2_members[sender]["channel_messages"] += 1
+                            t2_members[sender]["total_messages"] += 1
+
+                # Save thread row if any T2 activity
+                if sum(member["thread_messages"] for member in t2_members.values()) > 0:
+                    t2_messages_tracker.append([msg.get('webUrl', '')] + [member['thread_messages'] for member in t2_members.values()])
+                    for member in t2_members:
+                        t2_members[member]["thread_messages"] = 0
+
             url = messages.get('@odata.nextLink')
             logging.info(f"Fetched next page of messages at {channel_name}")
 
         except Exception as e:
-            logging.error(f"Error fetching messages for team {team_name}, channel {channel_name}: {e}")
+            logging.error(f"Error fetching messages for {channel_name}: {e}")
             break
-    
-    logging.info(f"Fetching messages for {channel_name} complete")
 
-    # Reset all team member's channel message count to 0 when the channel search is complete
+    # Final channel total
     t2_messages_tracker.append(['TOTAL:'] + [member['channel_messages'] for member in t2_members.values()])
-    for member in t2_members: t2_members[member]["channel_messages"] = 0
+    for member in t2_members:
+        t2_members[member]["channel_messages"] = 0
 
     return t2_messages_tracker
     
